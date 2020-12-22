@@ -1,0 +1,553 @@
+<!-- TOC -->
+
+- [Mysql架构](#mysql%E6%9E%B6%E6%9E%84)
+    - [安装](#%E5%AE%89%E8%A3%85)
+        - [- ### docker安装](#---docker%E5%AE%89%E8%A3%85)
+        - [- ### rpm安装](#---rpm%E5%AE%89%E8%A3%85)
+        - [- ### 修改字符集](#---%E4%BF%AE%E6%94%B9%E5%AD%97%E7%AC%A6%E9%9B%86)
+        - [- ### docker-compose 安装](#---docker-compose-%E5%AE%89%E8%A3%85)
+        - [- ### 重要目录](#---%E9%87%8D%E8%A6%81%E7%9B%AE%E5%BD%95)
+    - [mysql 配置文件](#mysql-%E9%85%8D%E7%BD%AE%E6%96%87%E4%BB%B6)
+        - [二进制日志文件 log-bin](#%E4%BA%8C%E8%BF%9B%E5%88%B6%E6%97%A5%E5%BF%97%E6%96%87%E4%BB%B6-log-bin)
+        - [错误日志文件 log-error](#%E9%94%99%E8%AF%AF%E6%97%A5%E5%BF%97%E6%96%87%E4%BB%B6-log-error)
+        - [查询日志 log](#%E6%9F%A5%E8%AF%A2%E6%97%A5%E5%BF%97-log)
+        - [数据文件](#%E6%95%B0%E6%8D%AE%E6%96%87%E4%BB%B6)
+    - [分层架构](#%E5%88%86%E5%B1%82%E6%9E%B6%E6%9E%84)
+        - [连接层](#%E8%BF%9E%E6%8E%A5%E5%B1%82)
+        - [业务逻辑处理层](#%E4%B8%9A%E5%8A%A1%E9%80%BB%E8%BE%91%E5%A4%84%E7%90%86%E5%B1%82)
+        - [数据存储引擎层](#%E6%95%B0%E6%8D%AE%E5%AD%98%E5%82%A8%E5%BC%95%E6%93%8E%E5%B1%82)
+        - [文件存储层](#%E6%96%87%E4%BB%B6%E5%AD%98%E5%82%A8%E5%B1%82)
+    - [存储引擎](#%E5%AD%98%E5%82%A8%E5%BC%95%E6%93%8E)
+        - [查询语句](#%E6%9F%A5%E8%AF%A2%E8%AF%AD%E5%8F%A5)
+        - [MyISAM 和 InnoDB 对比](#myisam-%E5%92%8C-innodb-%E5%AF%B9%E6%AF%94)
+- [索引优化分析](#%E7%B4%A2%E5%BC%95%E4%BC%98%E5%8C%96%E5%88%86%E6%9E%90)
+    - [sql性能下降原因](#sql%E6%80%A7%E8%83%BD%E4%B8%8B%E9%99%8D%E5%8E%9F%E5%9B%A0)
+    - [join理论](#join%E7%90%86%E8%AE%BA)
+        - [机读执行顺序](#%E6%9C%BA%E8%AF%BB%E6%89%A7%E8%A1%8C%E9%A1%BA%E5%BA%8F)
+        - [join类型](#join%E7%B1%BB%E5%9E%8B)
+    - [索引](#%E7%B4%A2%E5%BC%95)
+        - [定义](#%E5%AE%9A%E4%B9%89)
+        - [索引的优劣](#%E7%B4%A2%E5%BC%95%E7%9A%84%E4%BC%98%E5%8A%A3)
+        - [索引分类](#%E7%B4%A2%E5%BC%95%E5%88%86%E7%B1%BB)
+        - [索引结构](#%E7%B4%A2%E5%BC%95%E7%BB%93%E6%9E%84)
+- [查询截取分析](#%E6%9F%A5%E8%AF%A2%E6%88%AA%E5%8F%96%E5%88%86%E6%9E%90)
+
+<!-- /TOC -->
+
+
+# Mysql架构
+
+## 安装
+
+- ### docker安装
+    [dockerhub-mysql](https://registry.hub.docker.com/_/mysql)
+    mysql的tag列表
+    ```
+    Supported tags and respective Dockerfile links
+    8.0.22, 8.0, 8, latest
+    5.7.32, 5.7, 5
+    5.6.50, 5.6
+    ```
+
+    运行容器
+    ``` sh 
+    # 为数据目录添加容器卷，以实现持久化
+    docker run -p 3306:3306 --name mysql \
+    -v /vagrant_data/mysql/conf:/etc/mysql/conf.d \
+    -v /vagrant_data/mysql/logs:/logs \
+    -v /vagrant_data/mysql/data:/var/lib/mysql \
+    -e MYSQL_ROOT_PASSWORD=123456 \
+    --restart=always \
+    -d mysql:5.7.32
+    ```
+
+    测试一下
+    ``` sh
+    [root@localhost mysql]# docker exec -it e8ff87a1fbf8 mysql -uroot -p123456
+    mysql: [Warning] Using a password on the command line interface can be insecure.
+    Welcome to the MySQL monitor.  Commands end with ; or \g.
+    Your MySQL connection id is 3
+    Server version: 5.7.32 MySQL Community Server (GPL)
+
+    Copyright (c) 2000, 2020, Oracle and/or its affiliates. All rights reserved.
+
+    Oracle is a registered trademark of Oracle Corporation and/or its
+    affiliates. Other names may be trademarks of their respective
+    owners.
+
+    Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+    mysql>
+    ```
+
+- ### rpm安装
+
+    去官网下载 mysql rpm 包
+
+    检查是否安装过
+    ``` sh
+    #检查安装包
+    rpm -qa | grep mysql
+
+    #检查该软件的端口
+    ps -ef | grep mysql
+    ```
+
+    安装
+    ``` sh
+    rpm -ivh 服务端包名
+    rpm -ivh 客户端包名
+    ```
+
+    启动服务
+    ``` sh
+    service mysql start
+    systemctl start mysql 
+    ```
+
+    设置root账户
+    ``` sh
+    /usr/bin/mysqladmin -u root password 123456
+    ```
+
+    查看运行级别
+    ``` sh
+    chkconfig --list | grep mysql
+
+    mysql         0:off   1:off   2:on    3:on    4:on    5:on    6:off
+    ```
+
+    如果345是off
+    ``` sh
+    chkconfig --level 345 mysql on
+    ```
+
+- ### 修改字符集
+    ``` sql
+    # 查询当前字符集
+    show variables like 'character%';
+    show variables like '%char%';
+    ```
+    ``` sql
+    mysql> show variables like 'character%';
+    +--------------------------+----------------------------+
+    | Variable_name            | Value                      |
+    +--------------------------+----------------------------+
+    | character_set_client     | latin1                     |
+    | character_set_connection | latin1                     |
+    | character_set_database   | latin1                     |<---- #此处是拉丁
+    | character_set_filesystem | binary                     |
+    | character_set_results    | latin1                     |
+    | character_set_server     | latin1                     |
+    | character_set_system     | utf8                       |
+    | character_sets_dir       | /usr/share/mysql/charsets/ |
+    +--------------------------+----------------------------+
+    ```
+
+    配置文件
+
+    |   版本     |    原始文件                  |   拷贝路径    |
+    |   ----     |         ----                |   ----     |
+    | 5.5之前    | /usr/share/mysql/my-huge.cnf | /etc/my.cnf |
+    | 5.5~5.7.18 | /usr/share/mysql/my-default.cnf | /etc/my.cnf |
+    | 5.7.18之后 | 不提供             | 自创建/etc/my.cnf |
+
+    新建或者复制出一个 `/etc/my.cnf`，添加如下配置，然后`重启服务`
+    ``` ini
+    # mysqld
+    [mysqld]
+    character-set-server=utf8
+    collation-server=utf8_general_ci
+    init_connect='SET NAMES utf8'
+
+    # client
+    [client]
+    default-character-set=utf8
+    ```
+
+    > 需要注意的是这种方式只能使这`之后建的库`默认编码是utf8，<br>
+    在修改配置文件之前创建的库，只能通过其他方式去修改编码，<br>
+    因此推荐在安装之初立刻修改字符集编码
+
+- ### docker-compose 安装
+
+    docker-compose.yml
+    ``` yaml
+    version: "3.8"
+    services:
+    mysql:
+        ports:
+        - "3306:3306"
+        volumes:
+        - /vagrant_data/mysql/conf:/etc/mysql/conf.d:ro
+        - /vagrant_data/mysql/logs:/logs
+        - /vagrant_data/mysql/data:/var/lib/mysql
+        environment:
+        - MYSQL_ROOT_PASSWORD=123456
+        build:
+        context: . # 指定Dockerfile, .代表当前目录下的默认Dockerfile文件
+        container_name: mmysql
+    ```
+
+    Dockerfile
+    ``` dockerfile
+    FROM mysql:5.7.32
+    COPY files/my.cnf /etc/my.cnf
+    RUN chmod -R 644 /etc/my.cnf
+    CMD ["mysqld"]
+    ENTRYPOINT ["docker-entrypoint.sh"]
+    ```
+
+    my.cnf
+    ``` ini
+    # mysqld
+    [mysqld]
+    character-set-server=utf8
+    collation-server=utf8_general_ci
+    init_connect='SET NAMES utf8'
+
+    # client
+    [client]
+    default-character-set=utf8
+    ```
+
+    结构
+    ``` sh
+    .
+    ├── docker-compose.yml
+    ├── Dockerfile
+    └── files
+        └── my.cnf
+
+    1 directory, 3 files
+    ```
+
+    运行
+    ``` docker
+    docker-compose up -d
+    ```
+
+
+- ### 重要目录
+
+    |   路径            |    解释                |   备注    |
+    |   ----            |         ----           |   ----     |
+    | /var/lib/mysql/   | mysql数据库文件存放路径 | /var/lib/mysql/atguigu.cloud.pid |
+    | /usr/share/mysql  | 配置文件目录             | mysql.server命令及配置文件 |
+    | /usr/bin          | 相关命令目录             | mysqladmin mysqldump等命令 |
+    | /etc/init.d/mysql | 启停相关脚本             | |
+
+## mysql 配置文件
+
+### 二进制日志文件 log-bin
+
+- 主从复制
+
+### 错误日志文件 log-error
+
+- 默认是关闭的
+
+### 查询日志 log
+
+### 数据文件
+
+- 默认路径 
+    > `/var/lib/mysql`
+- 查看全部库
+
+    ``` sh
+    [root@localhost test03_mysql]# docker exec -it c8267c78a8e0 ls -l /var/lib/mysql | grep ^d
+    drwxrwxrwx 1 1000 1000    28672 Nov 14 07:20 mysql
+    drwxrwxrwx 1 1000 1000    40960 Nov 14 07:20 performance_schema
+    drwxrwxrwx 1 1000 1000    49152 Nov 14 07:20 sys
+    ```
+
+- `frm` 文件
+    > 存放表结构
+
+- `myd` 文件
+    > MyISAM 存放表数据的文件
+
+- `myi` 文件
+    > MyISAM 存放表索引的文件
+
+- `ibd` 文件
+    > InnoDB 引擎存放表数据和表索引的文件
+
+- `opt` 文件
+    > 记录该库的默认字符集编码和字符集排序规则<br>
+    如果创建数据库指定了默认字符集和排序规则，而后续创建的表如果 `没有指定` 字符集和排序规则，那么该新建的表将 `采用db.opt文件中指定的属性`
+
+## 分层架构
+
+![分层架构](https://upload-images.jianshu.io/upload_images/577844-69fde9de1704ff36?imageMogr2/auto-orient/strip|imageView2/2/w/1080/format/webp)
+
+### 连接层
+
+> 最上层的一些 `客户端和连接服务`，包含本地sock通信和大多数基于客户端/服务端工具实现的tcp/ip通信<br>
+> 主要进行连接处理，授权认证，及相关的安全方案<br>
+
+> 引入线程池的概念，提供线程<br>
+> 亦可实现基于ssl的安全连接<br>
+> 服务器会为安全接入的每个客户端验证它所具备的操作权限
+
+
+### 业务逻辑处理层
+
+> 主要完成大多数的核心服务功能<br>
+> 在该层，<br>
+> 服务器会解析查询并创建相应的内部解析树，并对其完成相应的优化，如：确定查询顺序，以及是否利用索引<br>
+> 最后生成相应的执行操作<br>
+> 如果是select语句，还会查询内部缓存 (缓存空间大小一定程度上决定了大量读操作时的系统性能)
+
+- 连接池 `connection pool`
+    > 主要与连接层的应用程序进行交互
+
+- 管理服务和工具 `management services & utilltles`
+    >包括 备份、容灾、安全、恢复、集群等等
+
+- SQL 接口 `interface`
+    > 根据语句关键词分析语句构成，存储过程、视图、触发器等等
+
+- 解析器 `parser`
+    > 将sql语句加载过滤按照一定的顺序去解析
+
+    1. from
+    2. on
+    3. join
+    4. where
+    5. group by(开始使用select中的别名，后面的语句中都可以使用)
+    6. avg,sum....等聚合函数
+    7. having
+    8. select
+    9. distinct
+    10. order by
+
+- 优化器 `optimizer`
+    > 在分析和解析完成后，优化器会对语句进行优化 (确定查询顺序，以及是否利用索引等)，最终按照一定的顺序去执行
+
+- 缓存和缓冲 `caches & buffers`
+    > 服务器会查询内部的缓存,如果缓存空间足够大,这样可以解决大量读操作的环境中,能够很好的提升系统性能
+
+### 数据存储引擎层
+
+> 存储引擎负责mysql数据库中数据的存储与提取<br>
+> 服务器通过api与存储引擎进行通信<br>
+> 不同的存储引擎具有不同的功能，它也具有 `可拔插组件化` 的特点，可以根据实际使用需求选取
+
+### 文件存储层
+
+> 数据存储于文件系统中，完成与存储引擎的交互
+
+## 存储引擎
+
+### 查询语句
+
+- 查看所有的引擎类型
+
+    ``` sql
+    mysql> show engines;
+    ```
+    ``` 
+    +--------------------+---------+----------------------------------------------------------------+--------------+------+------------+
+    | Engine             | Support | Comment                                                        | Transactions | XA   | Savepoints |
+    +--------------------+---------+----------------------------------------------------------------+--------------+------+------------+
+    | InnoDB             | DEFAULT | Supports transactions, row-level locking, and foreign keys     | YES          | YES  | YES        |
+    | MRG_MYISAM         | YES     | Collection of identical MyISAM tables                          | NO           | NO   | NO         |
+    | MEMORY             | YES     | Hash based, stored in memory, useful for temporary tables      | NO           | NO   | NO         |
+    | BLACKHOLE          | YES     | /dev/null storage engine (anything you write to it disappears) | NO           | NO   | NO         |
+    | MyISAM             | YES     | MyISAM storage engine                                          | NO           | NO   | NO         |
+    | CSV                | YES     | CSV storage engine                                             | NO           | NO   | NO         |
+    | ARCHIVE            | YES     | Archive storage engine                                         | NO           | NO   | NO         |
+    | PERFORMANCE_SCHEMA | YES     | Performance Schema                                             | NO           | NO   | NO         |
+    | FEDERATED          | NO      | Federated MySQL storage engine                                 | NULL         | NULL | NULL       |
+    +--------------------+---------+----------------------------------------------------------------+--------------+------+------------+;
+    ```
+
+- 查看当前默认使用的存储引擎
+
+    ``` sql
+    mysql> show variables like '%storage_engine%';
+    +----------------------------------+--------+
+    | Variable_name                    | Value  |
+    +----------------------------------+--------+
+    | default_storage_engine           | InnoDB |
+    | default_tmp_storage_engine       | InnoDB |
+    | disabled_storage_engines         |        |
+    | internal_tmp_disk_storage_engine | InnoDB |
+    +----------------------------------+--------+
+    ```
+
+### MyISAM 和 InnoDB 对比
+
+- 对比图
+    |   对比项            |    MyISAM                |   InnoDB    |
+    |   ----            |         ----           |   ----     |
+    | 主外键   | 不支持 | 支持 |
+    | 事务  | 不支持 | 支持 |
+    | 锁  | 表锁，即使只是操作一条数据也会锁住整个表，`不适用于高并发场景` | 行锁，操作时只锁住该行，`适合高并发` |
+    | 缓存 | 索引缓存 | 索引缓存和数据缓存，对内存要求较高，内存大小对性能有决定性影响 |
+    | 关注点 | 性能 | 事务 |
+
+
+# 索引优化分析
+
+## sql性能下降原因
+
+具体表现为执行时间长，等待时间长
+
+-  查询语句差
+
+-  索引失效
+
+-  关联查询join太多<br>
+    设计缺陷或是不得已的需求
+
+
+## join理论
+
+### 机读执行顺序
+ 1. from<br>
+    对from子句中前两个表执行笛卡尔乘积（即两个表每一行数据都进行组合，有m条数据的m表和n条数据的n表组合，就是有 `m*n` 条数据的虚拟表），生成虚拟表t1<br>
+    ![学生表](./imgs/2020-11-21_104306_students.png)
+    ![班级表](./imgs/2020-11-21_104206_classes.png)<br>
+    连接后<br>
+    ![笛卡尔乘积](./imgs/2020-11-21_105031_笛卡尔乘积.png)
+ 2. on<br>
+    on子句中的逻辑表达式将会应用到t1的各个行中，筛选出符合表达式的行，生成虚拟表t2<br>
+    ![innerjoin2](./imgs/2020-11-21_105511_innerjoin2.png)
+    ![innerjoin](./imgs/2020-12-22_150429_innerjoin.png)
+ 3. join<br>
+    如果是outer join就将添加外部行，left或者right join 都将添加在前一步过滤掉的左或者右表中的行，生成虚拟表t3<br>
+    ![leftjoin](./imgs/2020-11-21_110849_leftjoin.png)<br>
+
+    使用outerjoin得到的一定是左或者右的整个集合，on的作用体现在，这个集合中的符合on条件的所有t1中的结果都会体现出来，即使是外键的关联也是如此<br>
+    ![leftjoin2](./imgs/2020-12-22_150116_leftjoin_2.png)
+
+
+    > 如果还有表要连接，其实也是重复上面三个步骤，将第三个表和t3进行笛卡尔乘积，再筛选on子句，再判断是否外连
+ 4. where<br>
+    对t3进行筛选，生成虚拟表t4<br>
+    ![where](./imgs/2020-12-22_144522_where子句.png)
+    ![where2](./imgs/2020-12-22_150617_where2.png)<br>
+    on和where的区别:<br>
+    where是最终筛选，on移除的行会在outerjoin时添加回来<br>
+    > `使用outerjoin和where，且条件相同，则和innerjoin所查询的结果集没有任何区别`
+ 5. group by(开始使用select中的别名，后面的语句中都可以使用)
+    将t4中相同的值合为一组，得到虚拟表t5，使用groupby，则后续所有步骤都得带上聚合函数，因为一组数据只会在结果集中体现一行<br>
+    ![group](./imgs/2020-12-22_175943_group.png)
+ 6. avg,sum....等聚合函数
+ 7. having<br>
+    应用having筛选器生成t6，是第一个也是唯一一个应用到已分组数据的筛选器<br>
+    ![having](./imgs/2020-12-22_180447_having.png)
+ 8. select<br>
+    筛选出指定的列，生成虚拟表t7
+ 9.  distinct<br>
+    将t7中的数据移除相同的行，生成虚拟表t8，如果应用了groupby语句那么这个步骤是多余的，因为其本身就是将相同的数据分组，生成了唯一的行
+ 10. order by<br>
+    使用orderby子句排序t8，返回的是一个游标，而不是虚拟表。
+    `sql本身是基于集合的理论的`，集合`不会对自己的成员预先排序`。对表进行排序的查询会返回一个对象，`这个对象包含特定的物理顺序的逻辑组织`，这个对象就是游标。所以`orderby子句查询不能作用于表表达式`，包括视图、内联表值函数、子查询、派生表和共用表表达式等<br>
+    ![orderby](./imgs/2020-12-22_182807_orderby.png)
+ 11. top选项<br>
+    应用top选项，返回结果给请求者
+
+### join类型
+
+1. 内连(交集) `inner join`
+2. 左连(左集合) `left join`
+3. 右连(右集合) `right join`
+4. 左连(左独占) `left join ... is null`
+5. 右连(右独占) `right join ... is null`
+6. 全连(并集) `full outer join (mysql使用union)`
+7. 全连(各自独占并集) `full outer join ... is null and ... is null`
+
+
+## 索引
+
+### 定义
+- >在数据之外，数据库系统还维护着满足特定查找算法的数据结构，这些数据结构以某种方式指向数据，这样就可以在这些数据结构的基础上实现高级查找算法，这就是索引<br>
+
+    >简而言之，`索引就是排好序的快速查找数据结构`，<br>
+
+    > 因此索引影响到的是 `where` 和 `orderby` 子句
+
+- > 一般来说索引本身也很大，不可能全部存在于内存中，因此往往 `以索引文件的形式存储在磁盘上`
+
+- > 我们常说的索引，如果没有特别指明，多是指 `B树` (多路搜索树，并不一定是二叉树) 结构组织的索引<br>
+
+    > 其中聚集索引、复合索引、前缀索引和唯一索引都是 `B+树` 索引，统称索引
+
+    > 也有 hash索引等
+    
+### 索引的优劣
+
+- 优点<br>
+    1. 提高了检索效率，降低了数据库的IO成本
+    2. 通过索引进行排序，降低数据库排序的成本，降低了CPU的消耗
+
+- 劣势<br>
+    1. 索引的本质也是一张表，该表保存了主键和索引字段，并指向实体表的记录，所以索引列也占空间
+    2. 索引会影响表的更新操作的速度，因为更新表时，不仅要更新数据，还要更新索引
+    3. 索引只是提高效率的一个因素而已，如果有大量表，就需要花费大量时间研究建立最优秀的索引，或优化查询
+
+
+### 索引分类
+
+- 单值索引
+    > 一个索引只包含单个列<br>
+
+    > 注意：<br>
+    > - 尽量选择不重复值的字段<br>
+    > - 一般不要超过5个索引
+- 唯一索引
+    > 索引列的值必须唯一，但允许为空
+- 复合索引
+    > 即一个索引包含多个列
+- 基本语法<br>
+    ``` sql
+    # 创建索引
+    create [unique] index indexName on mytable(columnname(length))
+
+    # 添加主键 (主键本质就是唯一索引)
+    ALTER TABLE tbl_name ADD PRIMARY KEY (column_list)
+    # 添加唯一索引，索引值必须唯一
+    ALTER TABLE tbl_name ADD UNIQUE index_name (column_list)
+    # 添加普通索引
+    ALTER TABLE tbl_name ADD INDEX index_name (column_list)
+    # 添加全文索引
+    ALTER TABLE tbl_name ADD FULLTEXT index_name (column_list)
+    ```
+    ``` sql
+    # 删除索引
+    drop index [indexName] on mytable
+    ```
+    ``` sql
+    # 查看索引
+    show index from table_name
+    ```
+
+### 索引结构
+
+- BTREE
+    > B 树是为了磁盘或其它存储设备而设计的一种多叉平衡查找树。（相对于二叉，B树每个内结点有多个分支，即多叉）
+
+    ![BTREE](https://upload-images.jianshu.io/upload_images/12058546-44a71668594a77d9.png?imageMogr2/auto-orient/strip|imageView2/2/w/654/format/webp)
+
+    > 特点：
+    > - 每个内部节点(假设其关键字个数为 `n`) 包含 `n+1`个指向他孩子的指针
+    >   - key(关键字) 和指针相互间隔，节点的两端是指针，所以指针比 key 多一个
+    >   - 每个指针要么为null，要么指向另一个节点
+    > - key 对各子树的关键字进行分割
+    >   - 指针在节点最左侧且不为null，则该指针指向的节点中的关键字都是小于最小key的
+    >   - ...右侧...大于...最大key
+    >   - 指针在左右相邻的key的中间，则该指针指向的节点的关键字都是在这两个key的区间内的
+    > - 每个叶子节点的深度相同
+    > - 每个节点的关键字个数有上下界，用 `t(t>1)` 来衡量
+    >   - 根节点以外的节点，至少有 `t-1` 个关键字，至少有 `t` 个子节点(指针)
+    >   - 根节点以外的节点，至多有 `2t-1` 个关键子，至多有 `2t` 个子节点(指针)，这种情况，称该节点是满的(full)
+
+    模拟查找29的过程<br>
+    - 第一次IO操作<br>
+        
+
+# 查询截取分析
