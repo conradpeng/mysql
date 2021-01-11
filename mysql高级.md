@@ -49,10 +49,28 @@
         - [小表驱动大表](#%E5%B0%8F%E8%A1%A8%E9%A9%B1%E5%8A%A8%E5%A4%A7%E8%A1%A8)
             - [in 和 exists的选择](#in-%E5%92%8C-exists%E7%9A%84%E9%80%89%E6%8B%A9)
         - [order by关键字优化](#order-by%E5%85%B3%E9%94%AE%E5%AD%97%E4%BC%98%E5%8C%96)
+            - [filesort](#filesort)
         - [group by关键字优化](#group-by%E5%85%B3%E9%94%AE%E5%AD%97%E4%BC%98%E5%8C%96)
+    - [慢查询日志](#%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%97%A5%E5%BF%97)
+        - [慢查询日志配置](#%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%97%A5%E5%BF%97%E9%85%8D%E7%BD%AE)
+        - [慢查询日志数量](#%E6%85%A2%E6%9F%A5%E8%AF%A2%E6%97%A5%E5%BF%97%E6%95%B0%E9%87%8F)
+        - [日志分析工具 mysqldumpslow](#%E6%97%A5%E5%BF%97%E5%88%86%E6%9E%90%E5%B7%A5%E5%85%B7-mysqldumpslow)
+            - [参数](#%E5%8F%82%E6%95%B0)
+            - [基本用例](#%E5%9F%BA%E6%9C%AC%E7%94%A8%E4%BE%8B)
+    - [批量数据脚本](#%E6%89%B9%E9%87%8F%E6%95%B0%E6%8D%AE%E8%84%9A%E6%9C%AC)
+        - [参数设置](#%E5%8F%82%E6%95%B0%E8%AE%BE%E7%BD%AE)
+    - [show profile / performance_schema](#show-profile--performance_schema)
+        - [show profile](#show-profile)
+        - [performance_schema](#performance_schema)
+    - [全局查询日志](#%E5%85%A8%E5%B1%80%E6%9F%A5%E8%AF%A2%E6%97%A5%E5%BF%97)
+- [锁机制](#%E9%94%81%E6%9C%BA%E5%88%B6)
+    - [分类](#%E5%88%86%E7%B1%BB)
+        - [读/写锁](#%E8%AF%BB%E5%86%99%E9%94%81)
+        - [表/行锁](#%E8%A1%A8%E8%A1%8C%E9%94%81)
 - [事务](#%E4%BA%8B%E5%8A%A1)
     - [隔离级别](#%E9%9A%94%E7%A6%BB%E7%BA%A7%E5%88%AB)
-- [ACID原理](#acid%E5%8E%9F%E7%90%86)
+- [ACID](#acid)
+    - [ACID原理](#acid%E5%8E%9F%E7%90%86)
 
 <!-- /TOC -->
 
@@ -621,6 +639,10 @@
             SELECT * FROM `table` WHERE a IN (1,2,3) and b > 1; 
             ```
             建立(a，b)，IN可以视为等值引用，不会终止索引匹配
+            ``` sql
+            SELECT * FROM `table` WHERE a IN (1,2,3) order by b;
+            ```
+            这种情况有一个特例，就是对于order by来说，in也是范围查询。排序的字段不会使用到索引。想要使用局部有序，就得保证前面的键是单值确定，a可能为123的情况下，b仍然是无序的
 
 
 ### 索引结构
@@ -945,13 +967,267 @@
 
 ### order by关键字优化
 
+> 目的是避免出现`filesort`
+
+
+#### filesort
+
+> 单独 orderby 和 where + orderby 都符合最左匹配原则（同升同降）<br>
+> 但是如果无法确保排序字段使用上索引，filesort有两种算法：双路排序和单路排序
+
+- 双路排序
+    > MySQL 4.1之前使用双路排序，两次扫描磁盘，最终得到数据，`读取行指针和orderby列`，对他们进行`排序`，然后`扫描排序好的列表`，按照列表中的值重新读取对应的数据输出
+
+- 单路排序
+    > 从磁盘读取需要查询的所有列，按照orderby列的顺序，在buffer对他们进行排序，然后扫描排序后的列表进行输出。相较于双路排序，将随机IO变成了`顺序IO`，但`会使用更多的内存空间`
+
+    弊端：如果一次无法完全读取所有列，那么IO的次数便无法估计，这也是filesort性能差的原因
+    > 在sortbuffer中，方法B比方法A要占用更多的空间，因为方法B把所有字段都取出，所以有可能取出的数据的总大小超过了sort_buffer的容量，导致每次只能取sort_buffer容量大小的数据，进行排序(创建tmp文件，多路合并)，然后循环取...排...这个过程，造成多次IO
+
+- 优化策略`
+    - `增大sort_buffer_size参数设置`
+    - `增大max_length_for_sort_data参数设置`<br>
+        - 这两个参数的增加需要找到他们的平衡，max_length增大也会时超出sort_buffer的概率增加
+    - orderby时`禁用select *`<br>
+        1. 当query字段总数小于max_length_for_sort_data且排序字段类型不是TEXT|BLOB时，会用单路排序，否则会使用多路排序
+        2. 两种算法都会超出sort_buffer，超出之后会创建tmp文件合并排序，导致多次IO，但是单路排序风险更大一些
+
 ### group by关键字优化
+> 优化原则几乎与orderby一致，需要注意的是，where高于having，能写在where的限定条件就不要去使用having限定
+
+## 慢查询日志
+
+> MySQL慢查询日志是MySQL提供的一种日志记录，用来记录在MySQL中响应时间超过阈值的语句，具体指运行时间超过long_query_time（默认值是10，运行10s以上）的SQL，会被记录到慢查询日志中
+
+`默认`情况下`不会开启`，需要手动修改参数开启，`若非调优需要建议不启动该参数，因为会带来性能影响`
+
+### 慢查询日志配置
+
+- 默认<br>
+    ``` sql
+    mysql> SHOW VARIABLES LIKE '%slow_query_log%';
+    +---------------------+--------------------------------------+
+    | Variable_name       | Value                                |
+    +---------------------+--------------------------------------+
+    | slow_query_log      | OFF                                  |
+    | slow_query_log_file | /var/lib/mysql/9a0b87ce04d1-slow.log |
+    +---------------------+--------------------------------------+
+    2 rows in set (0.01 sec)
+    ```
+
+- 开启<br>
+    ``` sql
+    set global slow_query_log=1;
+    ```
+    如需永久生效，需要修改配置文件`my.cnf`并重启mysql服务
+    ``` ini
+    [mysqld]
+    slow_query_log=1
+    # 如果没有指定文件名，存放路径默认会给一个缺省文件名，host_name-slow.log
+    slow_query_log_file=/var/lib/mysql/mysql01-slow.log
+    ```
+
+- 设置阈值
+    ``` sql
+    # 查看阈值
+    mysql> SHOW VARIABLES LIKE '%long_query_time%';
+    +-----------------+-----------+
+    | Variable_name   | Value     |
+    +-----------------+-----------+
+    | long_query_time | 10.000000 |
+    +-----------------+-----------+
+    1 row in set (0.00 sec)
+    ```
+    ``` sql
+    # 设置阈值
+    set global long_query_time=3;
+    ```
+    > 重新设置后，需要重新连接或者重开会话才能看到修改值，或者使用 `SHOW global VARIABLES LIKE '%long_query_time%'` 查看
+
+- 完整配置
+
+    ```ini
+    slow_query_log=1
+    slow_query_log_file=/var/lib/mysql/mysql01-slow.log
+    long_query_time=3
+    log_output=FILE
+    ```
+
+
+### 慢查询日志数量
+
+- 查询
+    ``` sql
+    mysql> show global status like '%Slow_queries%';
+    +---------------+-------+
+    | Variable_name | Value |
+    +---------------+-------+
+    | Slow_queries  | 1     |
+    +---------------+-------+
+    1 row in set (0.00 sec);
+    ```
+
+### 日志分析工具 `mysqldumpslow`
+
+#### 参数
+- mysqldumpslow --help
+- -s 按照何种方式排序
+  - c 访问次数
+  - l 锁定时间
+  - r 返回记录
+  - t 查询时间
+  - al 平均锁定时间
+  - ar 平均返回记录值
+  - at 平均查询时间
+- -t 返回前面多少条数据
+- -g 正则匹配
+
+#### 基本用例
+
+- 返回记录集最多的10条
+
+    ``` bash
+    mysqldumpslow -s r -t 10 /var/lib/mysql/mysql01-slow.log
+    ```
+- 返回访问次数最多的10条
+
+    ``` bash
+    mysqldumpslow -s c -t 10 /var/lib/mysql/mysql01-slow.log
+    ```
+
+- 返回按照时间排序前10条例含有左连接的查询语句
+    ``` bash
+    mysqldumpslow -s t -t 10 -g "left join" /var/lib/mysql/mysql01-slow.log
+    ```
+
+## 批量数据脚本
+
+### 参数设置
+
+> 创建函数，假如报错：this function has none of DETERMINISTIC......，因为我们开启了bin-log，需要为function指定一个参数
+
+- 临时开启<br>
+    在mysql重启后会失效
+    ``` sql
+    show variables like 'log_bin_trust_function_creators'
+    ```
+    ``` sql
+    set global log_bin_trust_function_creators=1
+    ```
+
+- 永久开启<br>
+    ``` ini
+    [mysqld]
+    log_bin_trust_function_creators=1
+    ```
+
+## show profile / performance_schema
+
+### show profile
+> MySQL 5.6之前的版本支持，默认是关闭
+
+- 查看服务状态
+    ``` sql
+    mysql> show variables like 'profiling';
+    +---------------+-------+
+    | Variable_name | Value |
+    +---------------+-------+
+    | profiling     | OFF   |
+    +---------------+-------+
+    1 row in set (0.00 sec)
+    ```
+
+- 开启服务
+    ``` sql
+    set profiling=on;
+    ```
+
+- 查看结果
+    ``` sql
+    mysql> show profiles;
+    +----------+------------+-----------------------------------------------------------------+
+    | Query_ID | Duration   | Query                                                           |
+    +----------+------------+-----------------------------------------------------------------+
+    |        1 | 0.00045300 | select count(*) a from litemall_goods group by id%20 order by a |
+    |        2 | 0.00042025 | select count(*) from litemall_goods group by id%10 limit 100    |
+    +----------+------------+-----------------------------------------------------------------+
+    2 rows in set, 1 warning (0.00 sec)
+    ```
+    诊断sql
+    >可用参数<br>
+    ALL 所有开销信息<br>
+    BLOCK IO 显示块IO相关开销<br>
+    CONTEXT SWITCHES 上下文切换相关开销<br>
+    CPU 显示CPU相关开销<br>
+    IPC 显示发送和接收相关开销<br>
+    MEMORY 显示内存相关开销<br>
+    PAGE FAULTS 显示页面错误相关开销<br>
+    SOURCE 显示和Source_function、Source_file、Source_line相关的开销信息
+    SWAPS 显示交换次数相关开销信息
+    ``` sql
+    mysql> show profile cpu,block io for query 1;
+    +----------------------+----------+----------+------------+--------------+---------------+
+    | Status               | Duration | CPU_user | CPU_system | Block_ops_in | Block_ops_out |
+    +----------------------+----------+----------+------------+--------------+---------------+
+    | starting             | 0.000078 | 0.000000 |   0.000054 |            0 |             0 |
+    | checking permissions | 0.000010 | 0.000000 |   0.000009 |            0 |             0 |
+    | Opening tables       | 0.000019 | 0.000000 |   0.000019 |            0 |             0 |
+    | init                 | 0.000021 | 0.000000 |   0.000021 |            0 |             0 |
+    | System lock          | 0.000014 | 0.000000 |   0.000015 |            0 |             0 |
+    | optimizing           | 0.000008 | 0.000000 |   0.000021 |            0 |             0 |
+    | statistics           | 0.000031 | 0.000000 |   0.000014 |            0 |             0 |
+    | preparing            | 0.000040 | 0.000000 |   0.000043 |            0 |             0 |
+    | Creating tmp table   | 0.000021 | 0.000000 |   0.000020 |            0 |             0 |
+    | Sorting result       | 0.000008 | 0.000000 |   0.000008 |            0 |             0 |
+    | executing            | 0.000006 | 0.000000 |   0.000006 |            0 |             0 |
+    | Sending data         | 0.000098 | 0.000000 |   0.000098 |            0 |             0 |
+    | Creating sort index  | 0.000020 | 0.000000 |   0.000020 |            0 |             0 |
+    | end                  | 0.000007 | 0.000000 |   0.000005 |            0 |             0 |
+    | query end            | 0.000018 | 0.000000 |   0.000021 |            0 |             0 |
+    | removing tmp table   | 0.000009 | 0.000000 |   0.000008 |            0 |             0 |
+    | query end            | 0.000007 | 0.000000 |   0.000007 |            0 |             0 |
+    | closing tables       | 0.000009 | 0.000000 |   0.000009 |            0 |             0 |
+    | freeing items        | 0.000015 | 0.000000 |   0.000015 |            0 |             0 |
+    | cleaning up          | 0.000015 | 0.000000 |   0.000014 |            0 |             0 |
+    +----------------------+----------+----------+------------+--------------+---------------+
+    20 rows in set, 1 warning (0.00 sec)
+    ```
+
+- 重点关注项
+
+    - converting HEAP to MyISAM 查询结果太大，内存不够用，往磁盘上搬数据
+    - Creating tmp table 创建临时表
+    - Copying to tmp table on disk 把内存中的临时表复制到磁盘
+    - locked
+
+### performance_schema
+
+[官方文档](https://dev.mysql.com/doc/refman/5.7/en/performance-schema-query-profiling.html)
+
+
+## 全局查询日志
+
+# 锁机制
+
+## 分类
+
+### 读/写锁
+- 读锁/共享锁：针对同一份数据，多个读操作可以同时进行而不互相影响
+- 写锁/排他锁：当前写操作没有完成前，会阻断其他写锁和读锁
+
+### 表/行锁
+
+- 表锁：
+    偏向MyISAM存储引擎，开销小，加锁快；无死锁；锁定粒度大，发生锁冲突的概率最高，并发度最低
+- 行锁：
 
 # 事务
 
 ## 隔离级别
 
-# ACID原理
+# ACID
+
+## ACID原理
 
 
 参考资料：<br>
